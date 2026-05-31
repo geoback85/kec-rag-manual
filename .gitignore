@@ -1,0 +1,12 @@
+# API 키 및 캐시 파일 제외
+.streamlit/secrets.toml
+*.db
+__pycache__/
+*.pyc
+.env
+kec_faq_cache.db
+eval_results/
+logs/
+
+# 대용량 파일 (필요 시 주석 해제)
+# manual_chunks_v2.jsonl
