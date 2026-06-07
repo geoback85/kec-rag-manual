@@ -188,23 +188,56 @@ _PROVIDER_CONFIG = {
                    "model": "gpt-4o-mini"},
 }
 
-SYSTEM_PROMPT = (
-    "당신은 한국도로공사(KEC) 비탈면·사면 유지관리 및 설계 전문가 AI입니다.\n"
-    "반드시 [참고 문서]의 내용만을 근거로 답변하십시오.\n"
-    "근거가 없으면 '자료상 근거 없음'이라고 명시하십시오.\n"
-    "답변은 사용자에게 직접 설명하듯 자연스럽고 간결한 한국어로 작성하십시오.\n"
-    "불필요한 섹션 제목(예: 답변 요약, 상세 설명, 유의사항)이나 형식적 구분은 쓰지 마십시오.\n"
-    "유사하거나 동일한 표·그림이 여러 근거에 걸쳐 있는 경우, 하나로 통합해서 요약하십시오.\n"
-    "표 내용이 근거라면 표를 풀어서 설명하되 원문을 기계적으로 복붙하지 마십시오.\n"
-    "답변 마지막에만 [인용 출처]를 정리하십시오."
-)
+# ── 1차: 근거 기반 원답 생성 프롬프트 ───────────────────────────────────────
 
-QUERY_TEMPLATE = (
-    "[참고 문서]\n{context}\n\n[질의]\n{query}\n\n"
-    "위 참고 문서만 근거로, 사용자에게 바로 설명하듯 자연스럽게 답변하십시오.\n"
-    "핵심 답을 먼저 2~4문장으로 제시하고, 필요하면 이어서 이유·기준·예외를 덧붙이십시오.\n"
-    "마지막에 [인용 출처]만 별도로 정리하십시오."
-)
+SYSTEM_RAW = """당신은 한국도로공사(KEC) 비탈면·사면 유지관리 및 설계 전문가 AI입니다.
+반드시 [참고 문서] 내용만 근거로 답변하세요.
+근거가 없으면 '자료상 근거 없음'이라고 명시하세요.
+
+출력 규칙:
+- 반드시 Markdown으로 작성할 것
+- 첫 문단은 2~3문장 이내의 핵심 답변
+- 필요한 경우만 bullet list 사용 (한 항목 1~2줄 이내)
+- 한 문단은 3문장 이하
+- 표가 필요한 경우에만 markdown table 사용
+- '청크'라는 표현 금지 — '인용' 또는 '근거'로 쓸 것
+- 마지막에 반드시 '## 인용 출처' 섹션을 넣고 bullet list로 정리"""
+
+QUERY_RAW = """[참고 문서]
+{context}
+
+[질의]
+{query}
+
+아래 형식으로 답변하세요.
+
+## 답변
+사용자에게 설명하듯 자연스럽게, 반복 문장 없이 답변
+
+## 인용 출처
+- 문서명 | 공법 | 페이지"""
+
+# ── 2차: 가독성 정리 프롬프트 ────────────────────────────────────────────────
+
+SYSTEM_REFINE = """당신은 기술 문서를 사용자 친화적으로 정리하는 편집 AI입니다.
+원답의 의미를 바꾸지 말고, 읽기 쉬운 Markdown 답변으로 다듬으세요.
+
+규칙:
+- 반복 문장 제거
+- 같은 의미의 나열은 묶어서 요약
+- 문단은 짧게 (3문장 이하)
+- 필요 시 bullet list 사용
+- '청크' 표현 금지 — '인용' 또는 '출처'로 쓸 것
+- 마지막 '## 인용 출처' 섹션 반드시 유지
+- 내용 추가 금지, 원답 의미만 정리"""
+
+QUERY_REFINE = """[질문]
+{query}
+
+[원답]
+{raw_answer}
+
+위 원답을 규칙에 따라 다듬으세요."""
 
 
 def build_context(chunks: list) -> str:
@@ -223,8 +256,64 @@ def build_context(chunks: list) -> str:
     return "\n".join(lines)
 
 
-def call_llm(query: str, context: str) -> str:
+def _call_single(system: str, user: str, temperature: float = 0.15) -> str:
+    """공통 LLM 호출 헬퍼."""
     provider, api_key = detect_provider()
+    if not provider:
+        return ""
+    try:
+        if provider == "anthropic":
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            msg = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=3000,  # 잘림 방지
+                temperature=temperature,
+                system=system,
+                messages=[{"role": "user", "content": user}],
+            )
+            return msg.content[0].text
+        else:
+            from openai import OpenAI
+            cfg = _PROVIDER_CONFIG[provider]
+            client = OpenAI(api_key=api_key, base_url=cfg.get("base_url"))
+            resp = client.chat.completions.create(
+                model=cfg["model"],
+                max_tokens=3000,  # 잘림 방지
+                temperature=temperature,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": user},
+                ],
+            )
+            return resp.choices[0].message.content
+    except Exception as e:
+        return f"[LLM 오류] {e}"
+
+
+def generate_raw_answer(query: str, context: str) -> str:
+    """1단계: 근거 기반 원답 생성."""
+    return _call_single(
+        SYSTEM_RAW,
+        QUERY_RAW.format(context=context, query=query),
+        temperature=0.1,
+    )
+
+
+def refine_answer(query: str, raw_answer: str) -> str:
+    """2단계: 가독성·중복 정리."""
+    if not raw_answer or raw_answer.startswith("[LLM 오류]"):
+        return raw_answer
+    return _call_single(
+        SYSTEM_REFINE,
+        QUERY_REFINE.format(query=query, raw_answer=raw_answer),
+        temperature=0.05,
+    )
+
+
+def call_llm(query: str, context: str) -> str:
+    """2-step 생성: 원답 → 정리."""
+    provider, _ = detect_provider()
     if not provider:
         return (
             "⚠️ **API 키가 설정되지 않았습니다.**\n\n"
@@ -235,31 +324,8 @@ def call_llm(query: str, context: str) -> str:
             "# OpenAI\nOPENAI_API_KEY = \"sk-...\"\n"
             "```"
         )
-    user_msg = QUERY_TEMPLATE.format(context=context, query=query)
-    try:
-        if provider == "anthropic":
-            import anthropic
-            client = anthropic.Anthropic(api_key=api_key)
-            msg = client.messages.create(
-                model="claude-sonnet-4-6", max_tokens=2048, temperature=0.15,
-                system=SYSTEM_PROMPT,
-                messages=[{"role": "user", "content": user_msg}],
-            )
-            return msg.content[0].text
-        else:
-            from openai import OpenAI
-            cfg = _PROVIDER_CONFIG[provider]
-            client = OpenAI(api_key=api_key, base_url=cfg.get("base_url"))
-            resp = client.chat.completions.create(
-                model=cfg["model"], max_tokens=2048, temperature=0.15,
-                messages=[
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user",   "content": user_msg},
-                ],
-            )
-            return resp.choices[0].message.content
-    except Exception as e:
-        return f"[LLM 오류] {e}"
+    raw = generate_raw_answer(query, context)
+    return refine_answer(query, raw)
 
 
 # ── PDF 뷰어 ──────────────────────────────────────────────────────────────────
@@ -444,8 +510,10 @@ if user_query:
             answer = "관련 매뉴얼 내용을 찾지 못했습니다. 다른 키워드로 시도해 주세요."
         else:
             context = build_context(results)
-            with st.spinner("💬 답변 생성 중..."):
-                answer = call_llm(user_query, context)
+            with st.spinner("✍️ 답변 작성 중 (1/2)..."):
+                raw = generate_raw_answer(user_query, context)
+            with st.spinner("✨ 답변 다듬는 중 (2/2)..."):
+                answer = refine_answer(user_query, raw)
 
         st.markdown(answer)
 
