@@ -94,6 +94,21 @@ def load_index():
     return {"chunks": chunks, "tf": tf_list, "idf": idf, "avgdl": avgdl}
 
 
+def _normalize_text(s: str) -> str:
+    s = re.sub(r"\s+", " ", s.strip().lower())
+    s = re.sub(r"[^\w\s가-힣.%:/-]", "", s)
+    return s
+
+
+def _dedup_key(chunk) -> tuple:
+    """청크 중복 판별 키 — 표는 제목, 나머지는 정규화된 본문 앞 200자."""
+    if chunk.chunk_type == "table":
+        if chunk.figure_id:
+            return ("table", chunk.manual_id, chunk.figure_id.strip().lower())
+        return ("table", chunk.manual_id, _normalize_text(chunk.content)[:200])
+    return (chunk.chunk_type, chunk.manual_id, _normalize_text(chunk.content)[:200])
+
+
 def search(index, query: str, top_k: int = 6, method_filter: str = None) -> list:
     if not index:
         return []
@@ -118,23 +133,24 @@ def search(index, query: str, top_k: int = 6, method_filter: str = None) -> list
         )
         if score > 0:
             w = {"text": 1.0, "table": 1.2, "figure": 0.9}.get(chunk.chunk_type, 1.0)
-            scores.append((i, score * w))
+            scores.append((chunk, score * w))
 
     scores.sort(key=lambda x: x[1], reverse=True)
-    result = []
-    seen_content = set()  # 중복 내용 제거
 
-    for idx, sc in scores:
+    seen = set()
+    result = []
+    skipped = 0
+    for chunk, score in scores:
+        key = _dedup_key(chunk)
+        if key in seen:
+            skipped += 1
+            continue
+        seen.add(key)
+        chunk.bm25_score = round(score, 4)
+        result.append(chunk)
         if len(result) >= top_k:
             break
-        c = chunks[idx]
-        # 앞 100자 기준으로 중복 탐지
-        content_sig = c.content[:100].strip()
-        if content_sig in seen_content:
-            continue
-        seen_content.add(content_sig)
-        c.bm25_score = round(sc, 3)
-        result.append(c)
+
     return result
 
 
@@ -201,6 +217,8 @@ def call_llm(query: str, context: str) -> str:
         "당신은 한국도로공사(KEC) 비탈면·사면 유지관리 전문가 AI입니다. "
         "반드시 [참고 문서] 내용만을 근거로 답변하세요. "
         "근거가 없으면 '자료상 근거 없음'이라고 명시하세요. "
+        "유사하거나 동일한 표·그림이 여러 청크에 걸쳐 있는 경우, 하나의 근거로 통합해서 요약하세요. "
+        "중복 내용은 반복하지 말고 핵심 정보만 간결하게 정리하세요. "
         "답변 마지막에 [인용 출처]를 포함하세요."
     )
     user_msg = f"[참고 문서]\n{context}\n\n[질의]\n{query}"
@@ -365,6 +383,19 @@ if user_query:
         if sources:
             html = " ".join(f'<span class="src-badge">📄 {s}</span>' for s in sources)
             st.markdown(html, unsafe_allow_html=True)
+
+        # 검색 청크 요약 (검증용 토글)
+        if found:
+            with st.expander(f"🔍 검색된 청크 {len(found)}개", expanded=False):
+                type_icon = {"text": "📝", "table": "📊", "figure": "🖼️"}
+                for i, c in enumerate(found, 1):
+                    icon = type_icon.get(c.chunk_type, "📄")
+                    preview = c.content[:80].replace("\n", " ").strip()
+                    st.markdown(
+                        f"**[{i}]** {icon} `{c.manual_id}` | {c.method} | "
+                        f"p.{c.page_start} | score={c.bm25_score}"
+                    )
+                    st.caption(f"↳ {preview}…")
 
         st.session_state.messages.append({
             "role": "assistant",
