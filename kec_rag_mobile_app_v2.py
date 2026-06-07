@@ -131,41 +131,101 @@ def search(index, query: str, top_k: int = 6, method_filter: str = None) -> list
 
 # ── LLM 호출 ──────────────────────────────────────────────────────────────────
 
-def get_api_key() -> str:
-    key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not key:
+def get_secret(key: str) -> str:
+    val = os.getenv(key, "")
+    if not val:
         try:
-            key = st.secrets.get("ANTHROPIC_API_KEY", "")
+            val = st.secrets.get(key, "")
         except Exception:
             pass
-    return key
+    return val
 
 
-def call_claude(query: str, context: str) -> str:
-    api_key = get_api_key()
-    if not api_key:
+def detect_provider() -> tuple:
+    """사용 가능한 API 제공자와 키 자동 감지 (우선순위 순)."""
+    if get_secret("ANTHROPIC_API_KEY"):
+        return "anthropic", get_secret("ANTHROPIC_API_KEY")
+    if get_secret("GEMINI_API_KEY"):
+        return "gemini", get_secret("GEMINI_API_KEY")
+    if get_secret("PERPLEXITY_API_KEY"):
+        return "perplexity", get_secret("PERPLEXITY_API_KEY")
+    if get_secret("OPENAI_API_KEY"):
+        return "openai", get_secret("OPENAI_API_KEY")
+    return None, None
+
+
+# 제공자별 설정
+_PROVIDER_CONFIG = {
+    "anthropic":  {"label": "✅ Claude (Anthropic)"},
+    "gemini":     {"label": "✅ Gemini (Google)",
+                   "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
+                   "model": "gemini-2.0-flash"},
+    "perplexity": {"label": "✅ Perplexity AI",
+                   "base_url": "https://api.perplexity.ai",
+                   "model": "llama-3.1-sonar-large-128k-online"},
+    "openai":     {"label": "✅ GPT (OpenAI)",
+                   "model": "gpt-4o-mini"},
+}
+
+
+def call_llm(query: str, context: str) -> str:
+    provider, api_key = detect_provider()
+
+    if not provider:
         return (
-            "⚠️ **ANTHROPIC_API_KEY** 가 설정되지 않았습니다.\n\n"
-            "Streamlit Cloud → 앱 Settings → **Secrets** 탭에 아래 내용을 추가하세요:\n"
-            "```toml\nANTHROPIC_API_KEY = \"sk-ant-...\"\n```"
+            "⚠️ **API 키가 설정되지 않았습니다.**\n\n"
+            "Streamlit Cloud → 앱 Settings → **Secrets** 탭에 아래 중 하나를 추가하세요:\n\n"
+            "```toml\n"
+            "# Google Gemini (무료 티어 있음)\n"
+            "GEMINI_API_KEY = \"AIza...\"\n\n"
+            "# Anthropic Claude\n"
+            "ANTHROPIC_API_KEY = \"sk-ant-...\"\n\n"
+            "# Perplexity AI\n"
+            "PERPLEXITY_API_KEY = \"pplx-...\"\n\n"
+            "# OpenAI\n"
+            "OPENAI_API_KEY = \"sk-...\"\n"
+            "```"
         )
+
+    system = (
+        "당신은 한국도로공사(KEC) 비탈면·사면 유지관리 전문가 AI입니다. "
+        "반드시 [참고 문서] 내용만을 근거로 답변하세요. "
+        "근거가 없으면 '자료상 근거 없음'이라고 명시하세요. "
+        "답변 마지막에 [인용 출처]를 포함하세요."
+    )
+    user_msg = f"[참고 문서]\n{context}\n\n[질의]\n{query}"
+
     try:
-        import anthropic
-        client = anthropic.Anthropic(api_key=api_key)
-        system = (
-            "당신은 한국도로공사(KEC) 비탈면·사면 유지관리 전문가 AI입니다. "
-            "반드시 [참고 문서] 내용만을 근거로 답변하세요. "
-            "근거가 없으면 '자료상 근거 없음'이라고 명시하세요. "
-            "답변 마지막에 [인용 출처]를 포함하세요."
-        )
-        msg = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=2048,
-            temperature=0.1,
-            system=system,
-            messages=[{"role": "user", "content": f"[참고 문서]\n{context}\n\n[질의]\n{query}"}],
-        )
-        return msg.content[0].text
+        if provider == "anthropic":
+            import anthropic
+            client = anthropic.Anthropic(api_key=api_key)
+            msg = client.messages.create(
+                model="claude-sonnet-4-6",
+                max_tokens=2048,
+                temperature=0.1,
+                system=system,
+                messages=[{"role": "user", "content": user_msg}],
+            )
+            return msg.content[0].text
+
+        else:  # gemini / perplexity / openai — OpenAI 호환 API
+            from openai import OpenAI
+            cfg = _PROVIDER_CONFIG[provider]
+            client = OpenAI(
+                api_key=api_key,
+                base_url=cfg.get("base_url"),
+            )
+            resp = client.chat.completions.create(
+                model=cfg["model"],
+                max_tokens=2048,
+                temperature=0.1,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user",   "content": user_msg},
+                ],
+            )
+            return resp.choices[0].message.content
+
     except Exception as e:
         return f"[LLM 오류] {e}"
 
@@ -213,8 +273,10 @@ with st.sidebar:
         st.warning("청크 파일 없음")
 
     st.divider()
-    api_ok = bool(get_api_key())
-    st.markdown(f"**LLM**: {'✅ 연결됨' if api_ok else '⚠️ API 키 필요'}")
+    provider, _ = detect_provider()
+    cfg = _PROVIDER_CONFIG.get(provider, {})
+    llm_label = cfg.get("label", "⚠️ API 키 필요")
+    st.markdown(f"**LLM**: {llm_label}")
     st.caption("KEC 비탈면 매뉴얼 RAG v2")
 
 # 헤더
@@ -279,7 +341,7 @@ if user_query:
         else:
             context = build_context(found)
             with st.spinner("💭 답변 생성 중..."):
-                answer = call_claude(user_query, context)
+                answer = call_llm(user_query, context)
             sources = list({f"{c.manual_id} p.{c.page_start}" for c in found[:4]})
 
         st.markdown(answer)
