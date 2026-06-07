@@ -143,23 +143,25 @@ def get_secret(key: str) -> str:
 
 def detect_provider() -> tuple:
     """사용 가능한 API 제공자와 키 자동 감지 (우선순위 순)."""
-    if get_secret("ANTHROPIC_API_KEY"):
-        return "anthropic", get_secret("ANTHROPIC_API_KEY")
-    if get_secret("GEMINI_API_KEY"):
-        return "gemini", get_secret("GEMINI_API_KEY")
-    if get_secret("PERPLEXITY_API_KEY"):
-        return "perplexity", get_secret("PERPLEXITY_API_KEY")
-    if get_secret("OPENAI_API_KEY"):
-        return "openai", get_secret("OPENAI_API_KEY")
+    checks = [
+        ("anthropic",  "ANTHROPIC_API_KEY"),
+        ("groq",       "GROQ_API_KEY"),
+        ("gemini",     "GEMINI_API_KEY"),
+        ("openai",     "OPENAI_API_KEY"),
+        ("perplexity", "PERPLEXITY_API_KEY"),
+    ]
+    for provider, env_key in checks:
+        val = get_secret(env_key)
+        if val:
+            return provider, val
     return None, None
 
 
-# 제공자별 설정
+# 제공자별 설정 (OpenAI 호환 제공자)
 _PROVIDER_CONFIG = {
-    "anthropic":  {"label": "✅ Claude (Anthropic)"},
-    "gemini":     {"label": "✅ Gemini (Google)",
-                   "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-                   "model": "gemini-1.5-flash"},
+    "groq":       {"label": "✅ Groq (LLaMA3, 무료)",
+                   "base_url": "https://api.groq.com/openai/v1",
+                   "model": "llama-3.3-70b-versatile"},
     "perplexity": {"label": "✅ Perplexity AI",
                    "base_url": "https://api.perplexity.ai",
                    "model": "llama-3.1-sonar-large-128k-online"},
@@ -176,13 +178,12 @@ def call_llm(query: str, context: str) -> str:
             "⚠️ **API 키가 설정되지 않았습니다.**\n\n"
             "Streamlit Cloud → 앱 Settings → **Secrets** 탭에 아래 중 하나를 추가하세요:\n\n"
             "```toml\n"
-            "# Google Gemini (무료 티어 있음)\n"
-            "GEMINI_API_KEY = \"AIza...\"\n\n"
-            "# Anthropic Claude\n"
+            "# ① Groq — 완전 무료, Google 계정으로 가입 (추천)\n"
+            "# https://console.groq.com → API Keys → Create\n"
+            "GROQ_API_KEY = \"gsk_...\"\n\n"
+            "# ② Anthropic Claude\n"
             "ANTHROPIC_API_KEY = \"sk-ant-...\"\n\n"
-            "# Perplexity AI\n"
-            "PERPLEXITY_API_KEY = \"pplx-...\"\n\n"
-            "# OpenAI\n"
+            "# ③ OpenAI\n"
             "OPENAI_API_KEY = \"sk-...\"\n"
             "```"
         )
@@ -208,17 +209,7 @@ def call_llm(query: str, context: str) -> str:
             )
             return msg.content[0].text
 
-        elif provider == "gemini":
-            import google.generativeai as genai
-            genai.configure(api_key=api_key)
-            model = genai.GenerativeModel(
-                model_name="gemini-1.5-flash",
-                system_instruction=system,
-            )
-            resp = model.generate_content(user_msg)
-            return resp.text
-
-        else:  # perplexity / openai — OpenAI 호환 API
+        else:  # groq / perplexity / openai — OpenAI 호환 API
             from openai import OpenAI
             cfg = _PROVIDER_CONFIG[provider]
             client = OpenAI(
