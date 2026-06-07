@@ -208,7 +208,17 @@ def call_llm(query: str, context: str) -> str:
             )
             return msg.content[0].text
 
-        else:  # gemini / perplexity / openai — OpenAI 호환 API
+        elif provider == "gemini":
+            import google.generativeai as genai
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel(
+                model_name="gemini-1.5-flash",
+                system_instruction=system,
+            )
+            resp = model.generate_content(user_msg)
+            return resp.text
+
+        else:  # perplexity / openai — OpenAI 호환 API
             from openai import OpenAI
             cfg = _PROVIDER_CONFIG[provider]
             client = OpenAI(
