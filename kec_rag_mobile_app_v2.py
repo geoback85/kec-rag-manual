@@ -159,7 +159,7 @@ _PROVIDER_CONFIG = {
     "anthropic":  {"label": "✅ Claude (Anthropic)"},
     "gemini":     {"label": "✅ Gemini (Google)",
                    "base_url": "https://generativelanguage.googleapis.com/v1beta/openai/",
-                   "model": "gemini-2.0-flash"},
+                   "model": "gemini-1.5-flash"},
     "perplexity": {"label": "✅ Perplexity AI",
                    "base_url": "https://api.perplexity.ai",
                    "model": "llama-3.1-sonar-large-128k-online"},
