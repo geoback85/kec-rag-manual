@@ -161,6 +161,22 @@ class FaqCache:
 
 
 # =============================================================================
+# 무거운 초기화 캐싱 (Streamlit Cloud 타임아웃 방지)
+# =============================================================================
+
+@st.cache_resource(show_spinner="🔍 매뉴얼 인덱스 로딩 중...")
+def _load_agent():
+    """BM25 인덱스 + 에이전트를 한 번만 로드하고 캐싱."""
+    try:
+        from kec_rag_agent_v2 import KecRagAgent
+        agent = KecRagAgent()
+        return agent
+    except Exception as e:
+        logger.warning("에이전트 로드 실패: %s", e)
+        return None
+
+
+# =============================================================================
 # RAG 에이전트 브릿지 v2 — kec_rag_agent_v2 기반
 # =============================================================================
 
@@ -182,17 +198,14 @@ class AgentBridge:
             logger.info("원격 에이전트 모드: %s", self._remote_ep)
             self.backend = "remote"
             return
-        try:
-            from kec_rag_agent_v2 import KecRagAgent
-            self._agent  = KecRagAgent()
+        # 캐싱된 에이전트 사용 (무거운 BM25 인덱스를 한 번만 빌드)
+        self._agent = _load_agent()
+        if self._agent is not None:
             self.backend = self._agent.backend
-
-            # 검색기 통계용
             if hasattr(self._agent, '_local_retriever') and self._agent._local_retriever:
                 self._retriever = self._agent._local_retriever
             logger.info("에이전트 초기화: backend=%s", self.backend)
-        except Exception as e:
-            logger.warning("에이전트 초기화 실패 (데모 모드): %s", e)
+        else:
             self.backend = "demo"
 
     def ask(self, query: str, template: str = "general_qa", top_k: int = 6,
