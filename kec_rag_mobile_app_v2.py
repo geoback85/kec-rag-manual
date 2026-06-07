@@ -707,22 +707,7 @@ if FASTAPI_AVAILABLE:
 # 엔트리포인트
 # =============================================================================
 
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["streamlit","api","cache-test"], default="streamlit")
-    args = parser.parse_args()
-
-    if args.mode == "streamlit":
-        run_streamlit_app()
-    elif args.mode == "api":
-        import uvicorn
-        uvicorn.run("kec_rag_mobile_app_v2:api_app",
-                    host=AppConfig.API_HOST, port=AppConfig.API_PORT, reload=True)
-    elif args.mode == "cache-test":
-        cache = FaqCache(":memory:")
-        cache.put("테스트 질문", {"answer": "테스트 답변", "citations": [],
-                                  "has_evidence": True, "confidence": "보통", "elapsed_ms": 0})
-        hit = cache.get("테스트 질문")
-        assert hit is not None and hit["answer"] == "테스트 답변"
-        print("✅ 캐시 테스트 통과")
+# Streamlit Cloud / streamlit run 시 자동 실행
+# (argparse 제거 — Streamlit이 자체 인수를 전달해 충돌하는 문제 방지)
+if STREAMLIT_AVAILABLE:
+    run_streamlit_app()
