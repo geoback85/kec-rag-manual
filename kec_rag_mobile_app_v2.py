@@ -278,7 +278,7 @@ def build_context(chunks: list) -> str:
 # ── UI ────────────────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="KEC 비탈면 매뉴얼 AI 도우미",
+    page_title="한국도로공사 도로교통연구원 비탈면 매뉴얼 기반 AI 검색·검증 Agent",
     page_icon="🏔️",
     layout="centered",
 )
@@ -318,8 +318,9 @@ with st.sidebar:
 st.markdown("""
 <div style="background:linear-gradient(135deg,#1E4D9B,#2c6fbe);color:white;
   padding:1rem;border-radius:.75rem;margin-bottom:1.5rem;text-align:center">
-  <h2 style="margin:0;font-size:1.2rem">🏔️ KEC 비탈면 매뉴얼 AI 도우미</h2>
-  <p style="margin:.25rem 0 0;font-size:.82rem;opacity:.85">비탈면 설계·시공·유지관리 매뉴얼 AI 검색 (BM25 로컬)</p>
+  <h2 style="margin:0;font-size:1.1rem">🏔️ 한국도로공사 도로교통연구원</h2>
+  <p style="margin:.2rem 0 0;font-size:1rem;font-weight:bold">비탈면 매뉴얼 기반 AI 검색·검증 Agent</p>
+  <p style="margin:.2rem 0 0;font-size:.78rem;opacity:.8">비탈면 설계·시공·유지관리 매뉴얼 BM25 + LLM 검색</p>
 </div>""", unsafe_allow_html=True)
 
 # 세션 초기화
