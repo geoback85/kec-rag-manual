@@ -122,8 +122,17 @@ def search(index, query: str, top_k: int = 6, method_filter: str = None) -> list
 
     scores.sort(key=lambda x: x[1], reverse=True)
     result = []
-    for idx, sc in scores[:top_k]:
+    seen_content = set()  # 중복 내용 제거
+
+    for idx, sc in scores:
+        if len(result) >= top_k:
+            break
         c = chunks[idx]
+        # 앞 100자 기준으로 중복 탐지
+        content_sig = c.content[:100].strip()
+        if content_sig in seen_content:
+            continue
+        seen_content.add(content_sig)
         c.bm25_score = round(sc, 3)
         result.append(c)
     return result
@@ -234,10 +243,17 @@ def call_llm(query: str, context: str) -> str:
 def build_context(chunks: list) -> str:
     icon = {"text": "📝", "table": "📊", "figure": "🖼️"}
     lines = []
+    total_chars = 0
+    MAX_CONTEXT = 6000  # LLM 컨텍스트 최대 길이
+
     for i, c in enumerate(chunks, 1):
-        lines.append(f"[청크{i}] {icon.get(c.chunk_type,'📄')} {c.manual_id} | {c.method} | p.{c.page_start}")
-        lines.append(c.content[:600])
-        lines.append("")
+        content = c.content[:500]  # 청크당 최대 500자
+        header = f"[청크{i}] {icon.get(c.chunk_type,'📄')} {c.manual_id} | {c.method} | p.{c.page_start}"
+        block = f"{header}\n{content}\n"
+        if total_chars + len(block) > MAX_CONTEXT:
+            break
+        lines.append(block)
+        total_chars += len(block)
     return "\n".join(lines)
 
 
